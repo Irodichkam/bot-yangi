@@ -1,5 +1,8 @@
+import os
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+import threading
+from flask import Flask
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -10,14 +13,26 @@ from telegram.ext import (
     filters
 )
 
+# Render porti uchun Flask veb-server tayyorlaymiz
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def home():
+    return "Bot muvaffaqiyatli ishlamoqda!"
+
+def run_flask():
+    # Render o'zi beradigan PORT o'zgaruvchisini oladi (odatiy 10000)
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(host="0.0.0.0", port=port)
+
 # Bot va Admin sozlamalari
 BOT_TOKEN = "9207194444:AAFbuZLm_iH6Cn-oaosmsuCW8gAujDgdazI"
 ADMIN_ID = 1872175086
 
-# Conversation state-lari (Buyurtma bosqichlari)
+# Buyurtma bosqichlari
 PHONE, ADDRESS, QUANTITY = range(3)
 
-# Kengaytirilgan Tortlar Menyusi
+# Tortlar Menyusi
 CAKES_MENU = {
     "red_velvet": {
         "name": "🔴 Red Velvet (Qizil Barsxat)",
@@ -42,30 +57,6 @@ CAKES_MENU = {
         "price": "160,000 so'm",
         "photo": "https://images.unsplash.com/photo-1606890737304-57a1ca8a5b62?w=600",
         "description": "Shokoladli biskvit, arab yong'og'i va karamel bilan."
-    },
-    "tiramisu": {
-        "name": "☕ Tiramisu",
-        "price": "170,000 so'm",
-        "photo": "https://images.unsplash.com/photo-1571115177098-24ec42ed204d?w=600",
-        "description": "Italiya uslubidagi maskarpone pishlog'i va kofe ta'mli desert."
-    },
-    "cheesecake": {
-        "name": "🧀 Chizkeyk Nyuyork",
-        "price": "180,000 so'm",
-        "photo": "https://images.unsplash.com/photo-1533134242443-d4fd215305ad?w=600",
-        "description": "Nozik pishloqli va qumoq pechenyeli klassik chizkeyk."
-    },
-    "fruity": {
-        "name": "🍓 Mevali Tort",
-        "price": "140,000 so'm",
-        "photo": "https://images.unsplash.com/photo-1565958011703-44f9829ba187?w=600",
-        "description": "Yengil biskvit va yangi mevalar bilan bezatilgan desert."
-    },
-    "chocolate": {
-        "name": "🍫 Shokoladli Mousse",
-        "price": "165,000 so'm",
-        "photo": "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=600",
-        "description": "Achchiq va sutli shokoladli premium desert."
     }
 }
 
@@ -121,7 +112,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_main_menu()
         )
 
-# Buyurtma berish bosqichi
 async def start_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -151,31 +141,20 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         phone = update.message.text
 
     context.user_data["phone"] = phone
-
-    await update.message.reply_text(
-        "Rahmat! Endi yetkazib berish manzilini (shahar, ko'cha, uy) yozib yuboring:"
-    )
+    await update.message.reply_text("Rahmat! Endi yetkazib berish manzilini yozib yuboring:")
     return ADDRESS
 
 async def get_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["address"] = update.message.text
-
-    await update.message.reply_text(
-        "Nechta tort buyurtma qilmoqchisiz? (Masalan: 1 ta yoki 2 kg):"
-    )
+    await update.message.reply_text("Nechta tort buyurtma qilmoqchisiz?")
     return QUANTITY
 
 async def get_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["quantity"] = update.message.text
     user = update.effective_user
 
-    # Mijozga tasdiq xabari
-    await update.message.reply_text(
-        "✅ Rahmat! Buyurtmangiz qabul qilindi. Tez orada siz bilan bog'lanamiz.",
-        reply_markup=types.ReplyKeyboardRemove()
-    )
+    await update.message.reply_text("✅ Rahmat! Buyurtmangiz qabul qilindi.", reply_markup=ReplyKeyboardRemove())
 
-    # ADMINGA BUYURTMA HAQIDA MA'LUMOT YUBORISH
     admin_message = (
         f"📥 <b>YANGI BUYURTMA!</b>\n\n"
         f"👤 <b>Mijoz:</b> {user.full_name} (@{user.username if user.username else 'yoq'})\n"
@@ -187,22 +166,23 @@ async def get_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=admin_message,
-            parse_mode="HTML"
-        )
+        await context.bot.send_message(chat_id=ADMIN_ID, text=admin_message, parse_mode="HTML")
     except Exception as e:
-        logging.error(f"Adminga xabar yuborishda xatolik: {e}")
+        logging.error(f"Adminga yuborishda xato: {e}")
 
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Buyurtma bekor qilindi.")
+    await update.message.reply_text("Buyurtma bekor qilindi.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
 def main():
     logging.basicConfig(level=logging.INFO)
+
+    # Veb-serverni orqa fonda (thread) yurgizib qo'yamiz
+    threading.Thread(target=run_flask, daemon=True).start()
+
+    # Telegram botni ishga tushiramiz
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     conv_handler = ConversationHandler(
@@ -219,7 +199,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback, pattern="^(cake_|back_to_menu)"))
     app.add_handler(conv_handler)
 
-    print("Bot 24/7 rejimida ishga tushdi...")
+    print("Bot va Web Server ishga tushdi...")
     app.run_polling()
 
 if __name__ == "__main__":
